@@ -1,26 +1,30 @@
-import type { DefaultSession } from "next-auth"
+import { DefaultSession } from 'next-auth'
 
-declare module "next-auth" {
+declare module 'next-auth' {
   interface Session {
     user: {
       id: string
-      role?: 'user' | 'admin'
-      accessToken?: string
-    } & DefaultSession["user"]
+      accessToken: string
+      role?: 'USER' | 'ADMIN'
+      googleDriveConnected?: boolean
+      googleDriveFolderId?: string
+    } & DefaultSession['user']
   }
 
-  interface Account {
-    access_token?: string
-    refresh_token?: string
-    token_type?: string
-    expires_at?: number
-    scope?: string
+  interface User {
+    id: string
+    role?: 'USER' | 'ADMIN'
+    googleDriveConnected?: boolean
+    googleDriveFolderId?: string
   }
 }
 
-declare module "next-auth/jwt" {
+declare module 'next-auth/jwt' {
   interface JWT {
-    sub?: string
+    id?: string
     accessToken?: string
+    role?: 'USER' | 'ADMIN'
+    googleDriveConnected?: boolean
+    googleDriveFolderId?: string
   }
 }

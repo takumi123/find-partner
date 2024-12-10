@@ -1,21 +1,24 @@
-import React from 'react';
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { DashboardLayout } from '../components/layout/DashboardLayout';
+import { AnalysisResults } from '../components/dashboard/AnalysisResults';
 
-export default function AnalysisPage() {
+export default async function AnalysisPage() {
+  const session = await auth();
+
+  if (!session) {
+    redirect("/");
+  }
+
   return (
-    <DashboardLayout>
+    <DashboardLayout
+      userName={session.user?.name}
+      userRole={session.user?.role}
+    >
       <div className="p-6">
-        <h1 className="text-2xl font-semibold mb-6">分析結果</h1>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="space-y-4">
-            {/* 分析結果の表示エリア */}
-            <div className="border rounded-lg p-4">
-              <h2 className="text-lg font-medium mb-2">最新の分析</h2>
-              <p className="text-gray-600">
-                まだ分析結果がありません。新しい分析を開始してください。
-              </p>
-            </div>
-          </div>
+        <h1 className="text-2xl font-semibold mb-6">分析結果一覧</h1>
+        <div className="grid gap-6">
+          <AnalysisResults />
         </div>
       </div>
     </DashboardLayout>

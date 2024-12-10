@@ -14,7 +14,7 @@ export default async function DashboardPage() {
     redirect("/");
   }
 
-  const isAdmin = session.user?.role === 'admin';
+  const isAdmin = session.user?.role === 'ADMIN';
 
   return (
     <DashboardLayout 
@@ -22,17 +22,22 @@ export default async function DashboardPage() {
       userRole={session.user?.role}
     >
       <div className="space-y-6">
+        <LoveScoreTable />
+        
+        <div className="w-full grid grid-cols-1 gap-6">
+          <AudioUploader />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <GoogleDriveConnect />
           <AnalysisResults />
         </div>
 
-        <LoveScoreTable />
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <AudioUploader />
-          {isAdmin && <EvaluationManager />}
-        </div>
+        {isAdmin && (
+          <div className="w-full">
+            <EvaluationManager />
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

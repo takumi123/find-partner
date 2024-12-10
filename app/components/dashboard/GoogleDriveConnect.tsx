@@ -1,48 +1,120 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import Image from 'next/image';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useSession, signIn } from 'next-auth/react';
+import axios from 'axios';
 
-interface Folder {
+interface GoogleDriveFile {
   id: string;
   name: string;
+  webViewLink?: string;
+  mimeType?: string;
+  status?: 'processed' | 'error' | 'existing';
+  error?: string;
 }
 
-interface VideoFile {
-  id: string;
-  name: string;
-  webViewLink: string;
-  thumbnailLink?: string;
+interface ApiSuccessResponse {
+  success: true;
+  files: GoogleDriveFile[];
+  savedFolderId?: string;
 }
+
+interface ApiErrorResponse {
+  success: false;
+  error: string;
+  code?: string;
+}
+
+type ApiResponse = ApiSuccessResponse | ApiErrorResponse;
+
+type AxiosError = {
+  response?: {
+    status: number;
+  };
+  message: string;
+};
+
+const isAxiosError = (error: unknown): error is AxiosError => {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    ('response' in error || 'request' in error)
+  );
+};
+
+const isSuccessResponse = (response: ApiResponse): response is ApiSuccessResponse => {
+  return response.success === true;
+};
 
 export const GoogleDriveConnect = () => {
-  const [folders, setFolders] = useState<Folder[]>([]);
+  const { data: session, update } = useSession();
+  const [folders, setFolders] = useState<GoogleDriveFile[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>('');
-  const [videos, setVideos] = useState<VideoFile[]>([]);
+  const [videos, setVideos] = useState<GoogleDriveFile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedVideo, setSelectedVideo] = useState<VideoFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isWatching, setIsWatching] = useState(false);
+  const [needsReauth, setNeedsReauth] = useState(false);
 
-  // フォルダ一覧を取得
-  const fetchFolders = async () => {
+  const handleReauth = async () => {
     try {
-      setLoading(true);
-      const response = await fetch('/api/auth/google_drive');
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setFolders(data);
-      }
+      await signIn('google', { callbackUrl: window.location.href });
+      setNeedsReauth(false);
+      setError(null);
     } catch (error) {
-      console.error('フォルダ一覧取得エラー:', error);
-      alert('フォルダ一覧の取得に失敗しました。');
-    } finally {
-      setLoading(false);
+      console.error('再認証エラー:', error);
+      setError('再認証に失敗しました。もう一度お試しください。');
     }
   };
 
-  // 動画ファイル一覧を取得
-  const fetchVideos = async (folderId: string) => {
+  const handleApiError = useCallback((error: unknown) => {
+    console.error('API エラー:', error);
+    if (isAxiosError(error)) {
+      if (error.response?.status === 401) {
+        setNeedsReauth(true);
+        setError('認証の有効期限が切れました。再認証が必要です。');
+      } else {
+        setError(error.message || 'エラーが発生しました');
+      }
+    } else {
+      setError(error instanceof Error ? error.message : 'エラーが発生しました');
+    }
+  }, []);
+
+  const fetchFolders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.get<ApiResponse>('/api/auth/google_drive');
+      
+      if (!isSuccessResponse(response.data)) {
+        throw new Error(response.data.error || 'フォルダ一覧の取得に失敗しました');
+      }
+      
+      setFolders(response.data.files);
+      
+      if (response.data.savedFolderId) {
+        setSelectedFolder(response.data.savedFolderId);
+        setIsWatching(true);
+        await fetchVideos(response.data.savedFolderId);
+      }
+      
+      setNeedsReauth(false);
+    } catch (error) {
+      handleApiError(error);
+      setFolders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [handleApiError]);
+
+  const fetchVideos = useCallback(async (folderId: string) => {
+    if (!folderId) return;
+    
     try {
       setLoading(true);
+      setError(null);
       const response = await fetch('/api/auth/google_drive', {
         method: 'POST',
         headers: {
@@ -50,48 +122,126 @@ export const GoogleDriveConnect = () => {
         },
         body: JSON.stringify({ folderId }),
       });
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setVideos(data);
+
+      const data = await response.json() as ApiResponse;
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          setNeedsReauth(true);
+          throw new Error('認証の有効期限が切れました。再認証が必要です。');
+        }
+        throw new Error(data.success === false ? data.error : '動画ファイル一覧の取得に失敗しました');
+      }
+
+      if (isSuccessResponse(data)) {
+        setVideos(data.files);
+        setNeedsReauth(false);
+      } else {
+        throw new Error(data.error || '動画データの形式が不正です');
       }
     } catch (error) {
-      console.error('動画ファイル一覧取得エラー:', error);
-      alert('動画ファイル一覧の取得に失敗しました。');
+      handleApiError(error);
+      setVideos([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [handleApiError]);
 
-  // フォルダ選択時の処理
-  const handleFolderSelect = (folderId: string) => {
+  const setWatchFolder = useCallback(async (folderId: string) => {
+    if (!folderId) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch('/api/auth/google_drive', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ folderId, action: 'setWatchFolder' }),
+      });
+
+      const data = await response.json() as ApiResponse;
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          setNeedsReauth(true);
+          throw new Error('認証の有効期限が切れました。再認証が必要です。');
+        }
+        throw new Error(data.success === false ? data.error : 'フォルダの監視設定に失敗しました');
+      }
+
+      if (isSuccessResponse(data)) {
+        setIsWatching(true);
+        setNeedsReauth(false);
+        await update();
+      } else {
+        throw new Error(data.error || 'フォルダの監視設定に失敗しました');
+      }
+    } catch (error) {
+      handleApiError(error);
+      setIsWatching(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [handleApiError, update]);
+
+  const handleFolderSelect = useCallback(async (folderId: string) => {
     setSelectedFolder(folderId);
-    setSelectedVideo(null);
-    fetchVideos(folderId);
-  };
-
-  // 動画選択時の処理
-  const handleVideoSelect = (video: VideoFile) => {
-    setSelectedVideo(video);
-  };
+    if (folderId) {
+      await setWatchFolder(folderId);
+      await fetchVideos(folderId);
+    }
+  }, [fetchVideos, setWatchFolder]);
 
   useEffect(() => {
-    fetchFolders();
-  }, []);
+    if (session?.user) {
+      fetchFolders();
+    }
+  }, [session, fetchFolders]);
+
+  if (!session?.user) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <p className="text-gray-600">Google Driveに接続するにはログインが必要です。</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-medium text-gray-900 mb-4">Google Drive連携</h2>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-medium text-gray-900">Google Drive連携</h2>
+        {session.user.googleDriveConnected && (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            接続済み
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div className="mb-4 p-4 rounded-md bg-red-50 border border-red-200">
+          <p className="text-sm text-red-600">{error}</p>
+          {needsReauth && (
+            <button
+              onClick={handleReauth}
+              className="mt-2 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-full shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              再認証する
+            </button>
+          )}
+        </div>
+      )}
       
-      {/* フォルダ選択セクション */}
       <div className="mb-6">
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          フォルダを選択
+          監視するフォルダを選択
         </label>
         <select
           className="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
           value={selectedFolder}
           onChange={(e) => handleFolderSelect(e.target.value)}
-          disabled={loading}
+          disabled={loading || needsReauth}
         >
           <option value="">フォルダを選択してください</option>
           {folders.map((folder) => (
@@ -100,60 +250,36 @@ export const GoogleDriveConnect = () => {
             </option>
           ))}
         </select>
+        {isWatching && selectedFolder && (
+          <p className="mt-2 text-sm text-green-600">
+            このフォルダを監視中です。新しい動画を確認するには再読み込みしてください。
+          </p>
+        )}
       </div>
 
-      {/* 動画一覧セクション */}
       {selectedFolder && (
         <div className="mb-6">
           <h3 className="text-md font-medium text-gray-900 mb-3">動画一覧</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          <ul className="divide-y divide-gray-200">
             {videos.map((video) => (
-              <div
-                key={video.id}
-                className={`cursor-pointer p-2 rounded-lg border ${
-                  selectedVideo?.id === video.id
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
-                onClick={() => handleVideoSelect(video)}
-              >
-                {video.thumbnailLink ? (
-                  <div className="relative w-full h-32 mb-2">
-                    <Image
-                      src={video.thumbnailLink}
-                      alt={video.name}
-                      fill
-                      className="object-cover rounded"
-                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full h-32 bg-gray-100 flex items-center justify-center rounded mb-2">
-                    <span className="text-gray-400">サムネイルなし</span>
-                  </div>
-                )}
-                <p className="text-sm text-gray-900 truncate">{video.name}</p>
-              </div>
+              <li key={video.id} className="py-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-900">{video.name}</span>
+                  {video.status && (
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      video.status === 'processed' ? 'bg-green-100 text-green-800' :
+                      video.status === 'error' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {video.status === 'processed' ? '処理済み' :
+                       video.status === 'error' ? 'エラー' :
+                       '既存'}
+                    </span>
+                  )}
+                </div>
+              </li>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* 選択した動画の表示セクション */}
-      {selectedVideo && (
-        <div className="mt-6">
-          <h3 className="text-md font-medium text-gray-900 mb-3">
-            選択した動画: {selectedVideo.name}
-          </h3>
-          <div className="aspect-video">
-            <iframe
-              src={selectedVideo.webViewLink}
-              className="w-full h-full rounded"
-              allowFullScreen
-              title={`${selectedVideo.name}のプレビュー`}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            />
-          </div>
+          </ul>
         </div>
       )}
 

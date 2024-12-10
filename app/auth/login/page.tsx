@@ -1,5 +1,6 @@
 import { auth } from "@/auth"
 import { redirect } from "next/navigation"
+import { handleGoogleSignIn } from "@/app/actions/auth"
 
 export default async function LoginPage() {
   const session = await auth()
@@ -18,7 +19,7 @@ export default async function LoginPage() {
           </h2>
         </div>
         <div className="mt-8 space-y-6">
-          <form className="space-y-6" action="/api/auth/signin/google" method="POST">
+          <form className="space-y-6" action={handleGoogleSignIn}>
             <button
               type="submit"
               className="group relative flex w-full justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"
@@ -30,4 +31,4 @@ export default async function LoginPage() {
       </div>
     </div>
   )
-} 
+}

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Header } from './Header';
-import { Sidebar } from './Sidebar';
+import Sidebar from './Sidebar';
 import { Footer } from './Footer';
 
 interface DashboardLayoutProps {
@@ -13,12 +13,12 @@ interface DashboardLayoutProps {
 
 export const DashboardLayout = ({ children, userName, userRole }: DashboardLayoutProps) => {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-white">
       <Header userName={userName} userRole={userRole} />
-      <div className="flex flex-1">
+      <div className="flex flex-1 bg-white">
         <Sidebar />
-        <main className="flex-1 bg-gray-50">
-          <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <main className="flex-1 bg-gray-50 w-full">
+          <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 lg:ml-[64px]">
             {children}
           </div>
         </main>
